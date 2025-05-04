@@ -1,86 +1,124 @@
-def calculate_annual_taxes(income, tax_brackets):
+"""
+retirement.py – Progressive‑tax retirement‐savings projection
+Author : James Davis
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import List, Tuple
+
+
+__all__ = [
+    "Bracket",
+    "calculate_annual_tax",
+    "project_retirement_savings",
+]
+
+
+# ── Tax calculation ────────────────────────────────────────────────────────
+@dataclass(frozen=True, slots=True)
+class Bracket:
+    """A single marginal‑tax bracket."""
+    upper: float          # Inclusive upper limit of the bracket (use math.inf for the last)
+    rate:  float          # Marginal rate expressed as 0.10 for 10 %
+
+
+def calculate_annual_tax(income: float, brackets: List[Bracket]) -> float:
     """
-    Calculate the annual taxes based on progressive tax brackets.
+    Compute total tax for a progressive system.
 
-    Parameters:
-    income (float): Annual income
-    tax_brackets (dict): Tax brackets with upper limits and rates
+    Parameters
+    ----------
+    income
+        Gross annual taxable income.
+    brackets
+        **Ascending** list of :class:`Bracket` objects.
 
-    Returns:
-    float: Total tax owed for the year
+    Returns
+    -------
+    float
+        Total tax due.
     """
-    tax = 0
-    previous_limit = 0
+    tax_due, lower = 0.0, 0.0
 
-    # Iterate through each tax bracket to calculate the tax owed
-    for limit, rate in tax_brackets.items():
-        if income > limit:
-            tax += (limit - previous_limit) * rate
-        else:
-            tax += (income - previous_limit) * rate
+    for bracket in brackets:
+        if income <= lower:                            # nothing left to tax
             break
-        previous_limit = limit
 
-    return tax
+        taxable = min(income, bracket.upper) - lower   # dollars in this bracket
+        tax_due += taxable * bracket.rate
+        lower = bracket.upper
 
-def retirement_savings_with_taxes(initial_income, years, rate_of_return, inflation, income_growth, max_401k_contribution, tax_brackets):
+    return tax_due
+
+
+# ── Retirement‑projection logic ────────────────────────────────────────────
+def project_retirement_savings(
+    *,
+    initial_income: float,
+    years: int,
+    nominal_return: float,
+    inflation: float,
+    income_growth: float,
+    max_401k: float,
+    brackets: List[Bracket],
+) -> Tuple[float, float]:
     """
-    Calculate the future value of retirement savings adjusted for taxes, inflation, and income growth.
+    Grow 401(k) + after‑tax savings in real terms.
 
-    Parameters:
-    initial_income (float): Initial annual income
-    years (int): Number of years until retirement
-    rate_of_return (float): Annual rate of return (as a decimal)
-    inflation (float): Annual inflation rate (as a decimal)
-    income_growth (float): Annual income growth rate (as a decimal)
-    max_401k_contribution (float): Maximum annual 401(k) contribution
-    tax_brackets (dict): Tax brackets with upper limits and rates
+    All rates are decimals (e.g. 0.05 for 5 %).
 
-    Returns:
-    tuple: Future value of 401(k) and additional savings
+    Returns
+    -------
+    tuple
+        (future‑value_401k, future‑value_taxable)
     """
-    real_rate_of_return = rate_of_return - inflation
-    income = initial_income
-    total_401k = 0
-    total_additional_savings = 0
+    real_return = nominal_return - inflation
+    income      = initial_income
+    bal_401k    = 0.0
+    bal_taxable = 0.0
 
-    # Calculate savings for each year, taking into account taxes, 401(k) contributions, and additional savings
-    for year in range(years):
-        # Calculate annual taxes
-        annual_tax = calculate_annual_taxes(income, tax_brackets)
-        after_tax_income = income - annual_tax
+    for _ in range(years):
+        tax   = calculate_annual_tax(income, brackets)
+        net   = income - tax
 
-        # Calculate 401(k) contribution and its future value
-        contribution_401k = min(max_401k_contribution, after_tax_income)
-        total_401k = (total_401k + contribution_401k) * (1 + real_rate_of_return)
+        # 401(k) – paid from net income in the original logic
+        contrib_401k = min(max_401k, net)
+        bal_401k     = (bal_401k + contrib_401k) * (1 + real_return)
 
-        # Calculate additional savings beyond 401(k) and its future value
-        additional_savings = max(0, after_tax_income - contribution_401k)
-        total_additional_savings = (total_additional_savings + additional_savings) * (1 + real_rate_of_return)
+        # Any surplus goes to an after‑tax account
+        surplus       = net - contrib_401k
+        bal_taxable   = (bal_taxable + surplus) * (1 + real_return)
 
-        # Increase income for the next year based on income growth rate
+        # Next‑year salary bump
         income *= (1 + income_growth)
 
-    return total_401k, total_additional_savings
+    return bal_401k, bal_taxable
 
-# Parameters (same as before)
-initial_income = 112000
-years = 20
-rate_of_return = 0.05
-inflation = 0.03
-income_growth = 0.05
-max_401k_contribution = 23000
-tax_brackets = {
-    11600: 0.10,
-    47150: 0.12,
-    100525: 0.22,
-    191950: 0.24,
-    243725: 0.32,
-    609350: 0.35,
-    float('inf'): 0.37
-}
 
-# Calculate future value of retirement savings
-total_401k_with_taxes, total_additional_savings_with_taxes = retirement_savings_with_taxes(
-    initial_income, years, rate_of_return, inflation, income_growth, max_401k_contribution, tax_brackets
-)
+# ── Example usage ──────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    BRACKETS_2024 = [
+        Bracket(11_600, 0.10),
+        Bracket(47_150, 0.12),
+        Bracket(100_525, 0.22),
+        Bracket(191_950, 0.24),
+        Bracket(243_725, 0.32),
+        Bracket(609_350, 0.35),
+        Bracket(math.inf, 0.37),  # top bracket
+    ]
+
+    fv_401k, fv_taxable = project_retirement_savings(
+        initial_income = 112_000,
+        years          = 20,
+        nominal_return = 0.05,
+        inflation      = 0.03,
+        income_growth  = 0.05,
+        max_401k       = 23_000,
+        brackets       = BRACKETS_2024,
+    )
+
+    print(f"Future 401(k) balance : ${fv_401k:,.0f}")
+    print(f"Future taxable stash : ${fv_taxable:,.0f}")
